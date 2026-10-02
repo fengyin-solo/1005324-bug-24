@@ -5,6 +5,12 @@ import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } f
 // 会写进数据的「往回走」动作：命中就把这条记录标成异常态，看板上能一眼看出来。
 const NEGATIVE_ACTIONS = ['撤销', '作废', '拒绝', '驳回', '停用', '忽略', '下线', '回滚']
 
+// 测绘控制点废弃后，结论落到安全巡查台账；同一点位只落一条，重复提交废弃不新增。
+const SURVEY_KEY = 'survey'
+const DISCARD_ACTION = '登记废弃'
+const DISCARD_LEDGER_KEY = 'safety'
+const DISCARD_CATEGORY = '控制点废弃'
+
 export function moduleMeta(key: string): ModuleMeta {
   const meta = MODULE_BY_KEY.get(key)
   if (!meta) {
@@ -40,8 +46,19 @@ export function runAction(key: string, id: number, action: string): ActionResult
     return { ok: false, message: `没有找到编号为 ${id} 的${meta.entity}` }
   }
   const current = String(rows[index].status)
-  if (current === target) {
+  const currentIndex = meta.statuses.indexOf(current)
+  const targetIndex = meta.statuses.indexOf(target)
+  if (currentIndex === targetIndex) {
     return { ok: false, message: `${meta.entity}已经是「${target}」，不用重复操作` }
+  }
+  if (currentIndex < 0 || currentIndex > targetIndex) {
+    return { ok: false, message: `${meta.entity}已到「${current}」，不能倒退回「${target}」` }
+  }
+  if (currentIndex !== targetIndex - 1) {
+    return {
+      ok: false,
+      message: `${meta.entity}只能顺着状态一步步推进，不能从「${current}」直接到「${target}」`,
+    }
   }
   const lastStatus = meta.statuses[meta.statuses.length - 1]
   const updated: EntryRow = {
@@ -53,7 +70,38 @@ export function runAction(key: string, id: number, action: string): ActionResult
   const next = [...rows]
   next[index] = updated
   saveRows(key, next)
+  if (key === SURVEY_KEY && action === DISCARD_ACTION) {
+    appendDiscardConclusion(updated)
+  }
   return { ok: true, message: `${meta.entity}已${action}，当前状态「${target}」` }
+}
+
+// 废弃结论落进安全巡查台账：控制等级沿用历史点位里的值，不重新判定；已落过的点位直接跳过。
+function appendDiscardConclusion(point: EntryRow): void {
+  const rows = listRows(DISCARD_LEDGER_KEY)
+  const pointNo = String(point['点位编号'] ?? point.id)
+  const recorded = rows.some(
+    (row) => String(row['巡查区域']) === pointNo && String(row['巡查类别']) === DISCARD_CATEGORY,
+  )
+  if (recorded) {
+    return
+  }
+  const nextId = rows.reduce((max, row) => Math.max(max, Number(row.id) || 0), 0) + 1
+  const conclusion: EntryRow = {
+    id: nextId,
+    status: '已上报',
+    pending: false,
+    abnormal: false,
+    巡查编号: `SAFE-${String(nextId).padStart(4, '0')}`,
+    巡查区域: pointNo,
+    巡查类别: DISCARD_CATEGORY,
+    隐患描述: `测绘控制点${pointNo}已登记废弃`,
+    整改措施: `控制等级沿用历史点位记录：${String(point['控制等级'] ?? '—')}，点位退出可使用台账`,
+    巡查人: '值班管理员',
+    巡查日期: new Date().toISOString().slice(0, 10),
+    巡查状态: '已上报',
+  }
+  saveRows(DISCARD_LEDGER_KEY, [...rows, conclusion])
 }
 
 export function resetModule(key: string): PageResult {
@@ -61,18 +109,22 @@ export function resetModule(key: string): PageResult {
   return listEntries(key)
 }
 
-export function exportEntries(key: string): { filename: string; content: string } {
+export function exportEntries(
+  key: string,
+  filters: Record<string, string> = {},
+): { filename: string; content: string } {
   const meta = moduleMeta(key)
   const header = ['编号', ...meta.fields, '当前状态']
   const lines = [header.join(',')]
-  for (const row of listRows(key)) {
+  // 清单与台账取同一份数据：都走 listEntries，过滤条件一致，条数才不会对不上。
+  for (const row of listEntries(key, filters).items) {
     lines.push([row.id, ...meta.fields.map((field) => row[field] ?? ''), row.status].join(','))
   }
   return { filename: `${meta.name}-清单.csv`, content: `\uFEFF${lines.join('\n')}` }
 }
 
-export function downloadEntries(key: string): void {
-  const { filename, content } = exportEntries(key)
+export function downloadEntries(key: string, filters: Record<string, string> = {}): void {
+  const { filename, content } = exportEntries(key, filters)
   const blob = new Blob([content], { type: 'text/csv;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')

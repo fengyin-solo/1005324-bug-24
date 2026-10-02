@@ -85,13 +85,23 @@ const meta = moduleMeta('survey')
 const columns = ["点位编号", "控制等级", "北坐标", "东坐标", "高程值", "布设日期", "校核日期", "点位状态"]
 const actions = ["提交布设", "送交校核", "登记废弃"]
 const statuses = ["待布设", "可使用", "待校核", "已废弃"]
-const stats = [{"label": "可使用点位", "value": 0}, {"label": "待校核点位", "value": 0}, {"label": "已废弃点位", "value": 0}]
+const statDefs = [
+  { label: "可使用点位", status: "可使用" },
+  { label: "待校核点位", status: "待校核" },
+  { label: "已废弃点位", status: "已废弃" },
+]
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+const stats = computed(() =>
+  statDefs.map((item) => ({
+    label: item.label,
+    value: rows.value.filter((row) => String(row.status) === item.status).length,
+  })),
+)
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,
@@ -105,7 +115,8 @@ function resetFilters() {
 }
 
 function exportRows() {
-  downloadEntries(meta.key)
+  // 清单与页面台账用同一份筛选条件，两处条数、点位编号保持一致。
+  downloadEntries(meta.key, filters.value)
 }
 
 function openCreate() {
