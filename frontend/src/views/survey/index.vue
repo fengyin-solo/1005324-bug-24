@@ -85,7 +85,7 @@ const meta = moduleMeta('survey')
 const columns = ["点位编号", "控制等级", "北坐标", "东坐标", "高程值", "布设日期", "校核日期", "点位状态"]
 const actions = ["提交布设", "送交校核", "登记废弃"]
 const statuses = ["待布设", "可使用", "待校核", "已废弃"]
-const stats = [{"label": "可使用点位", "value": 0}, {"label": "待校核点位", "value": 0}, {"label": "已废弃点位", "value": 0}]
+const statStatuses = ["可使用", "待校核", "已废弃"]
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
@@ -96,6 +96,13 @@ const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,
     count: rows.value.filter((row) => String(row.status) === status).length,
+  })),
+)
+// 统计卡片跟着落库后的列表走：一废弃，可使用点位的数量立刻减下去。
+const stats = computed(() =>
+  statStatuses.map((status: string) => ({
+    label: `${status}点位`,
+    value: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
 
